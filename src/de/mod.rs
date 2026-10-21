@@ -22,6 +22,40 @@ use serde::{de::Visitor, Deserialize};
 use std::io::Read;
 use xml::EventReader;
 
+/// Tracks how deeply nested the deserializer currently is, so that deeply
+/// nested XML cannot overflow the stack.
+///
+/// Each nested element consumes a stack frame while deserializing. `Depth` is
+/// a cheap `Copy` token threaded through the deserializer; a new child element
+/// calls [`Depth::descend`] which fails with [`Error::TooDeep`] once the
+/// configured limit is exceeded instead of recursing further. Modelled on
+/// serde_yaml's `remaining_depth` and tokio-prost's `RECURSION_LIMIT`.
+#[derive(Clone, Copy)]
+pub(crate) struct Depth {
+    current: usize,
+    limit: usize,
+}
+
+impl Depth {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self { current: 0, limit }
+    }
+
+    /// Returns a `Depth` one level deeper, or [`Error::TooDeep`] if that would
+    /// exceed the configured limit.
+    pub(crate) fn descend(self) -> Result<Self> {
+        let current = self.current + 1;
+        if current > self.limit {
+            Err(Error::TooDeep(self.limit))
+        } else {
+            Ok(Self {
+                current,
+                limit: self.limit,
+            })
+        }
+    }
+}
+
 /// A convenience method for deserialize some object from a string.
 ///
 /// ```rust
@@ -64,12 +98,14 @@ pub fn from_reader<'de, T: Deserialize<'de>, R: Read>(reader: R) -> Result<T> {
 
 pub struct Deserializer<R: Read> {
     reader: RootReader<R>,
+    depth: Depth,
 }
 
 impl<R: Read> Deserializer<R> {
     pub fn new(reader: EventReader<R>) -> Self {
         Self {
             reader: RootReader::new(reader, false),
+            depth: Depth::new(SerdeXml::default().nesting_limit),
         }
     }
 
@@ -78,11 +114,13 @@ impl<R: Read> Deserializer<R> {
     }
 
     pub fn from_config(config: SerdeXml, source: R) -> Self {
+        let depth = Depth::new(config.nesting_limit);
         Self {
             reader: RootReader::new(
                 config.parser.create_reader(source),
                 config.overlapping_sequences,
             ),
+            depth,
         }
     }
 }
@@ -197,7 +235,8 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Deserializer<R> {
     {
         trace!("Root newtype struct '{name}'");
         self.reader.start_element()?;
-        let value = visitor.visit_newtype_struct(ChildDeserializer::new(self.reader.child()))?;
+        let value = visitor
+            .visit_newtype_struct(ChildDeserializer::new(self.reader.child(), self.depth))?;
         self.reader.end_element()?;
         Ok(value)
     }
@@ -240,7 +279,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Deserializer<R> {
     {
         trace!("Root map");
         self.reader.start_element()?;
-        let value = visitor.visit_map(MapAccess::new_map(self.reader.child()))?;
+        let value = visitor.visit_map(MapAccess::new_map(self.reader.child(), self.depth))?;
         self.reader.end_element()?;
         Ok(value)
     }
@@ -260,6 +299,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Deserializer<R> {
             self.reader.child(),
             element.attributes,
             fields,
+            self.depth,
         ))?;
         self.reader.end_element()?;
         Ok(value)
@@ -276,7 +316,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for &mut Deserializer<R> {
     {
         trace!("Root enum '{name}'");
         self.reader.start_element()?;
-        let value = visitor.visit_enum(EnumAccess::new(self.reader.child()))?;
+        let value = visitor.visit_enum(EnumAccess::new(self.reader.child(), self.depth))?;
         self.reader.end_element()?;
         Ok(value)
     }

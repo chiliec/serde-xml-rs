@@ -3,6 +3,7 @@ use super::{
     map::MapAccess,
     plain::PlainTextDeserializer,
     reader::{ChildReader, Event, Reader},
+    Depth,
 };
 use crate::{
     config::TEXT,
@@ -14,11 +15,12 @@ use std::io::Read;
 
 pub struct EnumAccess<'a, R: Read> {
     reader: ChildReader<'a, R>,
+    depth: Depth,
 }
 
 impl<'a, R: Read> EnumAccess<'a, R> {
-    pub fn new(reader: ChildReader<'a, R>) -> Self {
-        Self { reader }
+    pub fn new(reader: ChildReader<'a, R>, depth: Depth) -> Self {
+        Self { reader, depth }
     }
 }
 
@@ -44,20 +46,25 @@ impl<'de, 'a, R: Read> serde::de::EnumAccess<'de> for EnumAccess<'a, R> {
         let name = seed.deserialize::<StrDeserializer<Self::Error>>(
             element_name.as_str().into_deserializer(),
         )?;
-        Ok((name, VariantAccess::new(self.reader, element_name)))
+        Ok((
+            name,
+            VariantAccess::new(self.reader, element_name, self.depth),
+        ))
     }
 }
 
 pub struct VariantAccess<'a, R: Read> {
     reader: ChildReader<'a, R>,
     element_name: String,
+    depth: Depth,
 }
 
 impl<'a, R: Read> VariantAccess<'a, R> {
-    pub fn new(reader: ChildReader<'a, R>, element_name: String) -> Self {
+    pub fn new(reader: ChildReader<'a, R>, element_name: String, depth: Depth) -> Self {
         Self {
             reader,
             element_name,
+            depth,
         }
     }
 }
@@ -83,6 +90,7 @@ impl<'de, R: Read> serde::de::VariantAccess<'de> for VariantAccess<'_, R> {
             seed.deserialize(ChildDeserializer::new_with_element_name(
                 self.reader,
                 self.element_name,
+                self.depth,
             ))
         }
     }
@@ -109,6 +117,7 @@ impl<'de, R: Read> serde::de::VariantAccess<'de> for VariantAccess<'_, R> {
             self.reader.child(),
             element.attributes,
             fields,
+            self.depth,
         ))?;
         self.reader.end_element()?;
         Ok(value)

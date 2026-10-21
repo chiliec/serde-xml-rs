@@ -1,6 +1,7 @@
 use super::{
     child::ChildDeserializer,
     reader::{ChildReader, Event, Reader},
+    Depth,
 };
 use crate::error::{Error, Result};
 use log::trace;
@@ -9,13 +10,15 @@ use std::io::Read;
 pub struct SeqAccess<'a, R: Read> {
     reader: ChildReader<'a, R>,
     element_name: Option<String>,
+    depth: Depth,
 }
 
 impl<'a, R: Read> SeqAccess<'a, R> {
-    pub fn new(reader: ChildReader<'a, R>, element_name: Option<String>) -> Self {
+    pub fn new(reader: ChildReader<'a, R>, element_name: Option<String>, depth: Depth) -> Self {
         Self {
             reader,
             element_name,
+            depth,
         }
     }
 }
@@ -38,6 +41,7 @@ impl<'de, R: Read> serde::de::SeqAccess<'de> for SeqAccess<'_, R> {
                         .deserialize(ChildDeserializer::new_with_element_name(
                             self.reader.child(),
                             element_name.to_string(),
+                            self.depth,
                         ))
                         .map(Some);
                 }
@@ -46,7 +50,9 @@ impl<'de, R: Read> serde::de::SeqAccess<'de> for SeqAccess<'_, R> {
                     self.reader.fast_forward()?;
                 }
                 (None, Event::StartElement(_)) => {
-                    break match seed.deserialize(ChildDeserializer::new(self.reader.child())) {
+                    break match seed
+                        .deserialize(ChildDeserializer::new(self.reader.child(), self.depth))
+                    {
                         Ok(r) => Ok(Some(r)),
                         Err(Error::Custom(_) | Error::Unexpected { .. }) => Ok(None),
                         Err(e) => Err(e),

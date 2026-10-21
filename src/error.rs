@@ -16,6 +16,10 @@ pub enum Error {
         element_name: String,
         attribute_name: &'static str,
     },
+    #[error(
+        "Exceeded the maximum allowed nesting depth of {0}. If this input is legitimate, raise the limit via `SerdeXml::nesting_limit`."
+    )]
+    TooDeep(usize),
     #[error("Custom: {0}")]
     Custom(String),
     #[error("Reader: {0}")]

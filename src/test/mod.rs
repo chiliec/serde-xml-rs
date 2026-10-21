@@ -6,6 +6,7 @@ mod ignore;
 mod ill_formed;
 mod maps;
 mod namespaces;
+mod nesting_limit;
 mod optional;
 mod overlapping;
 mod sequence_container;

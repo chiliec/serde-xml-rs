@@ -4,6 +4,7 @@ use super::{
     reader::{ChildReader, Event, Reader},
     seq::SeqAccess,
     var::EnumAccess,
+    Depth,
 };
 use crate::error::{Error, Result};
 use log::trace;
@@ -13,20 +14,27 @@ use std::io::Read;
 pub struct ChildDeserializer<'a, R: Read> {
     reader: ChildReader<'a, R>,
     element_name: Option<String>,
+    depth: Depth,
 }
 
 impl<'a, R: Read> ChildDeserializer<'a, R> {
-    pub fn new(reader: ChildReader<'a, R>) -> Self {
+    pub fn new(reader: ChildReader<'a, R>, depth: Depth) -> Self {
         Self {
             reader,
             element_name: None,
+            depth,
         }
     }
 
-    pub fn new_with_element_name(reader: ChildReader<'a, R>, element_name: String) -> Self {
+    pub fn new_with_element_name(
+        reader: ChildReader<'a, R>,
+        element_name: String,
+        depth: Depth,
+    ) -> Self {
         Self {
             reader,
             element_name: Some(element_name),
+            depth,
         }
     }
 
@@ -194,7 +202,11 @@ impl<'de, R: Read> serde::Deserializer<'de> for ChildDeserializer<'_, R> {
         V: Visitor<'de>,
     {
         trace!("sequence");
-        visitor.visit_seq(SeqAccess::new(self.reader.child(), self.element_name))
+        visitor.visit_seq(SeqAccess::new(
+            self.reader.child(),
+            self.element_name,
+            self.depth,
+        ))
     }
 
     fn deserialize_tuple<V>(mut self, _len: usize, visitor: V) -> Result<V::Value>
@@ -228,7 +240,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for ChildDeserializer<'_, R> {
     {
         trace!("map");
         self.maybe_start_element()?;
-        let value = visitor.visit_map(MapAccess::new_map(self.reader.child()))?;
+        let value = visitor.visit_map(MapAccess::new_map(self.reader.child(), self.depth))?;
         self.maybe_end_element()?;
         Ok(value)
     }
@@ -248,6 +260,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for ChildDeserializer<'_, R> {
             self.reader.child(),
             element.attributes,
             fields,
+            self.depth,
         ))?;
         self.reader.end_element()?;
         Ok(value)
@@ -264,7 +277,7 @@ impl<'de, R: Read> serde::Deserializer<'de> for ChildDeserializer<'_, R> {
     {
         trace!("enum '{name}'");
         self.maybe_start_element()?;
-        let value = visitor.visit_enum(EnumAccess::new(self.reader.child()))?;
+        let value = visitor.visit_enum(EnumAccess::new(self.reader.child(), self.depth))?;
         self.maybe_end_element()?;
         Ok(value)
     }

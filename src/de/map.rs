@@ -2,6 +2,7 @@ use super::{
     child::ChildDeserializer,
     plain::PlainTextDeserializer,
     reader::{Attribute, ChildReader, Event, Reader},
+    Depth,
 };
 use crate::{
     config::{CONTENT, TEXT},
@@ -15,14 +16,16 @@ pub struct MapAccess<'a, R: Read> {
     reader: ChildReader<'a, R>,
     attributes: Peekable<std::vec::IntoIter<Attribute>>,
     fields: &'static [&'static str],
+    depth: Depth,
 }
 
 impl<'a, R: Read> MapAccess<'a, R> {
-    pub fn new_map(reader: ChildReader<'a, R>) -> Self {
+    pub fn new_map(reader: ChildReader<'a, R>, depth: Depth) -> Self {
         Self {
             reader,
             attributes: vec![].into_iter().peekable(),
             fields: &[],
+            depth,
         }
     }
 
@@ -30,11 +33,13 @@ impl<'a, R: Read> MapAccess<'a, R> {
         reader: ChildReader<'a, R>,
         attributes: Vec<Attribute>,
         fields: &'static [&'static str],
+        depth: Depth,
     ) -> Self {
         Self {
             reader,
             attributes: attributes.into_iter().peekable(),
             fields,
+            depth,
         }
     }
 
@@ -87,12 +92,17 @@ impl<'de, R: Read> serde::de::MapAccess<'de> for MapAccess<'_, R> {
             match self.reader.peek()? {
                 Event::StartElement(element) => {
                     let element_name = element.qname();
+                    // Descending into a nested element consumes a stack frame;
+                    // bail out with a clean error before we recurse past the
+                    // configured limit and overflow the stack.
+                    let depth = self.depth.descend()?;
                     if self.is_content(&element_name) {
-                        seed.deserialize(ChildDeserializer::new(self.reader.child()))
+                        seed.deserialize(ChildDeserializer::new(self.reader.child(), depth))
                     } else {
                         seed.deserialize(ChildDeserializer::new_with_element_name(
                             self.reader.child(),
                             element_name,
+                            depth,
                         ))
                     }
                 }

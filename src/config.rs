@@ -11,12 +11,19 @@ use xml::{
 pub const TEXT: &str = "#text";
 pub const CONTENT: &str = "#content";
 
+/// The default maximum nesting depth allowed when deserializing.
+///
+/// Modelled on tokio-prost's `RECURSION_LIMIT`, this guards against
+/// stack-overflow denial-of-service from deeply nested XML input.
+pub const DEFAULT_NESTING_LIMIT: usize = 100;
+
 #[derive(Clone, Debug)]
 pub struct SerdeXml {
     pub(crate) emitter: EmitterConfig,
     pub(crate) parser: ParserConfig,
     pub(crate) namespaces: Namespaces,
     pub(crate) overlapping_sequences: bool,
+    pub(crate) nesting_limit: usize,
 }
 
 impl Default for SerdeXml {
@@ -31,6 +38,7 @@ impl Default for SerdeXml {
                 .coalesce_characters(true),
             namespaces: Default::default(),
             overlapping_sequences: false,
+            nesting_limit: DEFAULT_NESTING_LIMIT,
         }
     }
 }
@@ -88,6 +96,23 @@ impl SerdeXml {
     /// ```
     pub fn overlapping_sequences(mut self, b: bool) -> Self {
         self.overlapping_sequences = b;
+        self
+    }
+
+    /// Sets the maximum nesting depth allowed when deserializing.
+    ///
+    /// Each level of nested XML elements consumes a stack frame while
+    /// deserializing, so unbounded nesting can overflow the stack and abort
+    /// the process. Once this many levels have been entered, deserialization
+    /// fails with [`Error::TooDeep`](crate::Error::TooDeep) instead of
+    /// recursing further. Defaults to
+    /// [`DEFAULT_NESTING_LIMIT`](crate::config::DEFAULT_NESTING_LIMIT) (100),
+    /// mirroring tokio-prost's `RECURSION_LIMIT`.
+    ///
+    /// Set it to [`usize::MAX`] to effectively disable the guard (not
+    /// recommended for untrusted input).
+    pub fn nesting_limit(mut self, limit: usize) -> Self {
+        self.nesting_limit = limit;
         self
     }
 
